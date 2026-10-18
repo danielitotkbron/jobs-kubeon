@@ -7,217 +7,7 @@
     
     <link rel="icon" type="image/png" href="logo.png">
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, onSnapshot, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyB4fJNlncjWova31Ecf2tc6TZABdMGj5hQ",
-            authDomain: "kubeon-jobs-4f3ff.firebaseapp.com",
-            projectId: "kubeon-jobs-4f3ff",
-            storageBucket: "kubeon-jobs-4f3ff.firebasestorage.app",
-            messagingSenderId: "632091924063",
-            appId: "1:632091924063:web:c7ed07dc89a57083376dea"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
-        let currentUser = null;
-        let isAdmin = false;
-
-        const loginForm = document.getElementById('login-form');
-        const loginScreen = document.getElementById('login-screen');
-        const dashboardScreen = document.getElementById('dashboard');
-
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            try {
-                await signInWithEmailAndPassword(auth, email, password);
-            } catch (error) {
-                alert("Credenciales incorrectas.");
-            }
-        });
-
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                currentUser = user;
-                loginScreen.style.display = "none";
-                dashboardScreen.style.display = "block";
-
-                // Verificar si es Admin
-                const q = query(collection(db, "usuarios"), where("email", "==", user.email));
-                const querySnapshot = await getDocs(q);
-                isAdmin = false;
-                querySnapshot.forEach((doc) => {
-                    if (doc.data().rol === "admin") isAdmin = true;
-                });
-
-                document.querySelectorAll('.admin-only').forEach(el => {
-                    el.style.display = isAdmin ? "block" : "none";
-                });
-
-                // Iniciar escuchas en tiempo real
-                cargarTareasTiempoReal();
-                iniciarChat();
-
-            } else {
-                currentUser = null;
-                dashboardScreen.style.display = "none";
-                loginScreen.style.display = "flex";
-            }
-        });
-
-        document.getElementById('logout-btn').addEventListener('click', () => {
-            signOut(auth);
-        });
-
-        // --- LOGICA DE LAS TAREAS EN TIEMPO REAL ---
-        function cargarTareasTiempoReal() {
-            const q = query(collection(db, "tareas"));
-            
-            onSnapshot(q, (snapshot) => {
-                const cSolicitudes = document.getElementById('solicitudes-tasks');
-                const cPendientes = document.getElementById('pending-tasks');
-                const cAceptados = document.getElementById('accepted-tasks');
-                const cTerminados = document.getElementById('completed-tasks');
-                
-                cSolicitudes.innerHTML = ''; cPendientes.innerHTML = ''; cAceptados.innerHTML = ''; cTerminados.innerHTML = '';
-
-                snapshot.forEach((docSnap) => {
-                    const tarea = docSnap.data();
-                    const id = docSnap.id;
-                    
-                    // Ocultar a los no-admins las tareas que no son suyas (excepto solicitudes nuevas)
-                    if (!isAdmin && tarea.estado !== 'solicitud' && tarea.asignadoA !== currentUser.email) return;
-
-                    const card = document.createElement('div');
-                    card.className = 'task-card';
-                    
-                    // Construir tarjeta
-                    card.innerHTML = `
-                        <div style="display:flex; justify-content:space-between; align-items:start;">
-                            <h4>${tarea.titulo}</h4>
-                            ${tarea.precio ? `<span style="color:#a855f7; font-weight:bold;">${tarea.precio}</span>` : ''}
-                        </div>
-                        <p>${tarea.descripcion}</p>
-                        ${tarea.contacto ? `<small style="color:#3b82f6;">Contacto: ${tarea.contacto}</small>` : ''}
-                        <small>Staff: ${tarea.asignadoA}</small>
-                        <div class="task-actions">
-                            ${tarea.estado === 'solicitud' ? `<button onclick="aceptarSolicitud('${id}')" style="background:#2563eb;">Tomar Solicitud</button>` : ''}
-                            ${tarea.estado === 'pendiente' && (tarea.asignadoA === currentUser.email || isAdmin) ? `<button onclick="cambiarEstado('${id}', 'aceptado')">Empezar</button>` : ''}
-                            ${tarea.estado === 'aceptado' ? `<button onclick="cambiarEstado('${id}', 'terminado')">Terminar</button>` : ''}
-                            ${isAdmin ? `<button class="btn-danger" onclick="borrarTarea('${id}')">X</button>` : ''}
-                        </div>
-                    `;
-
-                    if (tarea.estado === 'solicitud') cSolicitudes.appendChild(card);
-                    if (tarea.estado === 'pendiente') cPendientes.appendChild(card);
-                    if (tarea.estado === 'aceptado') cAceptados.appendChild(card);
-                    if (tarea.estado === 'terminado') cTerminados.appendChild(card);
-                });
-            });
-        }
-
-        // Un staff toma la solicitud y se le asigna a él
-        window.aceptarSolicitud = async (id) => {
-            if (!confirm("¿Estás seguro de tomar esta solicitud? Te la asignarás a ti mismo.")) return;
-            try {
-                const tareaRef = doc(db, "tareas", id);
-                await updateDoc(tareaRef, { 
-                    asignadoA: currentUser.email,
-                    estado: "pendiente" 
-                });
-            } catch (e) {
-                alert("Error al tomar solicitud.");
-            }
-        };
-
-        window.cambiarEstado = async (id, nuevoEstado) => {
-            try {
-                const tareaRef = doc(db, "tareas", id);
-                await updateDoc(tareaRef, { estado: nuevoEstado });
-            } catch (e) {
-                alert("Error al actualizar.");
-            }
-        };
-
-        window.borrarTarea = async (id) => {
-            if (!isAdmin) return;
-            if (!confirm("¿Seguro que quieres eliminar esta tarea?")) return;
-            try {
-                await deleteDoc(doc(db, "tareas", id));
-            } catch (e) {
-                alert("Error al borrar.");
-            }
-        };
-
-        // --- LOGICA DEL CHAT DE STAFF ---
-        let unsubscribeChat = null;
-
-        function iniciarChat() {
-            const chatBox = document.getElementById('chat-messages');
-            const chatInput = document.getElementById('chat-input');
-            const sendBtn = document.getElementById('chat-send');
-
-            // Escuchar los últimos 50 mensajes
-            const q = query(collection(db, "chat_staff"), orderBy("timestamp", "asc"), limit(50));
-            
-            if(unsubscribeChat) unsubscribeChat();
-            
-            unsubscribeChat = onSnapshot(q, (snapshot) => {
-                chatBox.innerHTML = '';
-                snapshot.forEach((docSnap) => {
-                    const msg = docSnap.data();
-                    const isMe = msg.email === currentUser.email;
-                    
-                    chatBox.innerHTML += `
-                        <div style="margin-bottom: 10px; text-align: ${isMe ? 'right' : 'left'};">
-                            <span style="font-size: 11px; color: #9ca3af; display: block;">${isMe ? 'Tú' : msg.email.split('@')[0]}</span>
-                            <div style="display: inline-block; background: ${isMe ? '#7e22ce' : '#374151'}; padding: 8px 12px; border-radius: 8px; max-width: 80%; text-align: left;">
-                                ${msg.texto}
-                            </div>
-                        </div>
-                    `;
-                });
-                // Auto-scroll al final
-                chatBox.scrollTop = chatBox.scrollHeight;
-            });
-
-            sendBtn.onclick = async () => {
-                const texto = chatInput.value.trim();
-                if (!texto) return;
-                chatInput.value = '';
-                try {
-                    await addDoc(collection(db, "chat_staff"), {
-                        texto: texto,
-                        email: currentUser.email,
-                        timestamp: new Date()
-                    });
-                } catch (e) {
-                    alert("Error al enviar mensaje.");
-                }
-            };
-
-            chatInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') sendBtn.click();
-            });
-        }
-
-        // Abrir/Cerrar Chat
-        document.getElementById('chat-toggle').addEventListener('click', () => {
-            const container = document.getElementById('chat-container');
-            container.style.display = container.style.display === 'none' ? 'flex' : 'none';
-        });
-        document.getElementById('chat-close').addEventListener('click', () => {
-            document.getElementById('chat-container').style.display = 'none';
-        });
-
-    </script>
+    
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Montserrat', sans-serif; }
         body { background: #090b11; color: white; min-height: 100vh; }
@@ -225,6 +15,7 @@
         /* LOGIN */
         .login-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: radial-gradient(circle at top left, rgba(126,34,206,0.15), transparent 50%); }
         .login-box { background: rgba(18, 18, 25, .92); border: 1px solid rgba(168, 85, 247, .3); border-radius: 20px; padding: 40px; width: 100%; max-width: 400px; text-align: center; backdrop-filter: blur(10px); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+        .login-box h1 { margin-bottom: 20px; font-weight: 900; }
         .login-box form { display: flex; flex-direction: column; gap: 15px; }
         input { padding: 15px; border-radius: 10px; border: 1px solid rgba(168, 85, 247, 0.3); background: rgba(0,0,0,0.5); color: white; font-size: 16px; outline: none; transition: 0.3s; }
         input:focus { border-color: #a855f7; }
@@ -264,14 +55,201 @@
         @media(max-width: 1024px) { .columns { grid-template-columns: 1fr 1fr; } }
         @media(max-width: 600px) { .columns { grid-template-columns: 1fr; } #chat-container { width: 90%; right: 5%; } }
     </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, onSnapshot, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyB4fJNlncjWova31Ecf2tc6TZABdMGj5hQ",
+            authDomain: "kubeon-jobs-4f3ff.firebaseapp.com",
+            projectId: "kubeon-jobs-4f3ff",
+            storageBucket: "kubeon-jobs-4f3ff.firebasestorage.app",
+            messagingSenderId: "632091924063",
+            appId: "1:632091924063:web:c7ed07dc89a57083376dea"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUser = null;
+        let isAdmin = false;
+
+        const loginForm = document.getElementById('login-form');
+        const loginScreen = document.getElementById('login-screen');
+        const dashboardScreen = document.getElementById('dashboard');
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+            } catch (error) {
+                alert("Credenciales incorrectas. Verifica tu correo y contraseña.");
+            }
+        });
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                loginScreen.style.display = "none";
+                dashboardScreen.style.display = "block";
+
+                const q = query(collection(db, "usuarios"), where("email", "==", user.email));
+                const querySnapshot = await getDocs(q);
+                isAdmin = false;
+                querySnapshot.forEach((doc) => {
+                    if (doc.data().rol === "admin") isAdmin = true;
+                });
+
+                document.querySelectorAll('.admin-only').forEach(el => {
+                    el.style.display = isAdmin ? "block" : "none";
+                });
+
+                cargarTareasTiempoReal();
+                iniciarChat();
+
+            } else {
+                currentUser = null;
+                dashboardScreen.style.display = "none";
+                loginScreen.style.display = "flex";
+            }
+        });
+
+        document.getElementById('logout-btn').addEventListener('click', () => {
+            signOut(auth);
+        });
+
+        function cargarTareasTiempoReal() {
+            const q = query(collection(db, "tareas"));
+            
+            onSnapshot(q, (snapshot) => {
+                const cSolicitudes = document.getElementById('solicitudes-tasks');
+                const cPendientes = document.getElementById('pending-tasks');
+                const cAceptados = document.getElementById('accepted-tasks');
+                const cTerminados = document.getElementById('completed-tasks');
+                
+                cSolicitudes.innerHTML = ''; cPendientes.innerHTML = ''; cAceptados.innerHTML = ''; cTerminados.innerHTML = '';
+
+                snapshot.forEach((docSnap) => {
+                    const tarea = docSnap.data();
+                    const id = docSnap.id;
+                    
+                    if (!isAdmin && tarea.estado !== 'solicitud' && tarea.asignadoA !== currentUser.email) return;
+
+                    const card = document.createElement('div');
+                    card.className = 'task-card';
+                    
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:start;">
+                            <h4>${tarea.titulo}</h4>
+                            ${tarea.precio ? `<span style="color:#a855f7; font-weight:bold;">${tarea.precio}</span>` : ''}
+                        </div>
+                        <p>${tarea.descripcion}</p>
+                        ${tarea.contacto ? `<small style="color:#3b82f6;">Contacto: ${tarea.contacto}</small>` : ''}
+                        <small>Staff: ${tarea.asignadoA}</small>
+                        <div class="task-actions">
+                            ${tarea.estado === 'solicitud' ? `<button onclick="aceptarSolicitud('${id}')" style="background:#2563eb;">Tomar Solicitud</button>` : ''}
+                            ${tarea.estado === 'pendiente' && (tarea.asignadoA === currentUser.email || isAdmin) ? `<button onclick="cambiarEstado('${id}', 'aceptado')">Empezar</button>` : ''}
+                            ${tarea.estado === 'aceptado' ? `<button onclick="cambiarEstado('${id}', 'terminado')">Terminar</button>` : ''}
+                            ${isAdmin ? `<button class="btn-danger" onclick="borrarTarea('${id}')">X</button>` : ''}
+                        </div>
+                    `;
+
+                    if (tarea.estado === 'solicitud') cSolicitudes.appendChild(card);
+                    if (tarea.estado === 'pendiente') cPendientes.appendChild(card);
+                    if (tarea.estado === 'aceptado') cAceptados.appendChild(card);
+                    if (tarea.estado === 'terminado') cTerminados.appendChild(card);
+                });
+            });
+        }
+
+        window.aceptarSolicitud = async (id) => {
+            if (!confirm("¿Estás seguro de tomar esta solicitud? Te la asignarás a ti mismo.")) return;
+            try {
+                const tareaRef = doc(db, "tareas", id);
+                await updateDoc(tareaRef, { asignadoA: currentUser.email, estado: "pendiente" });
+            } catch (e) { alert("Error al tomar solicitud."); }
+        };
+
+        window.cambiarEstado = async (id, nuevoEstado) => {
+            try {
+                const tareaRef = doc(db, "tareas", id);
+                await updateDoc(tareaRef, { estado: nuevoEstado });
+            } catch (e) { alert("Error al actualizar."); }
+        };
+
+        window.borrarTarea = async (id) => {
+            if (!isAdmin) return;
+            if (!confirm("¿Seguro que quieres eliminar esta tarea?")) return;
+            try {
+                await deleteDoc(doc(db, "tareas", id));
+            } catch (e) { alert("Error al borrar."); }
+        };
+
+        let unsubscribeChat = null;
+
+        function iniciarChat() {
+            const chatBox = document.getElementById('chat-messages');
+            const chatInput = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('chat-send');
+
+            const q = query(collection(db, "chat_staff"), orderBy("timestamp", "asc"), limit(50));
+            
+            if(unsubscribeChat) unsubscribeChat();
+            
+            unsubscribeChat = onSnapshot(q, (snapshot) => {
+                chatBox.innerHTML = '';
+                snapshot.forEach((docSnap) => {
+                    const msg = docSnap.data();
+                    const isMe = msg.email === currentUser.email;
+                    
+                    chatBox.innerHTML += `
+                        <div style="margin-bottom: 10px; text-align: ${isMe ? 'right' : 'left'};">
+                            <span style="font-size: 11px; color: #9ca3af; display: block;">${isMe ? 'Tú' : msg.email.split('@')[0]}</span>
+                            <div style="display: inline-block; background: ${isMe ? '#7e22ce' : '#374151'}; padding: 8px 12px; border-radius: 8px; max-width: 80%; text-align: left; word-break: break-word;">
+                                ${msg.texto}
+                            </div>
+                        </div>
+                    `;
+                });
+                chatBox.scrollTop = chatBox.scrollHeight;
+            });
+
+            sendBtn.onclick = async () => {
+                const texto = chatInput.value.trim();
+                if (!texto) return;
+                chatInput.value = '';
+                try {
+                    await addDoc(collection(db, "chat_staff"), {
+                        texto: texto, email: currentUser.email, timestamp: new Date()
+                    });
+                } catch (e) { alert("Error al enviar mensaje."); }
+            };
+
+            chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendBtn.click();
+            });
+        }
+
+        document.getElementById('chat-toggle').addEventListener('click', () => {
+            const container = document.getElementById('chat-container');
+            container.style.display = container.style.display === 'none' ? 'flex' : 'none';
+        });
+        document.getElementById('chat-close').addEventListener('click', () => {
+            document.getElementById('chat-container').style.display = 'none';
+        });
+    </script>
 </head>
 <body>
 
-    <!-- PANTALLA DE LOGIN -->
     <div id="login-screen" class="login-container">
         <div class="login-box">
             <h1>Kubeon Staff</h1>
-            <form id="login-form" style="margin-top: 20px;">
+            <form id="login-form">
                 <input type="email" id="email" placeholder="Correo electrónico" required>
                 <input type="password" id="password" placeholder="Contraseña" required>
                 <button type="submit">Iniciar Sesión</button>
@@ -279,7 +257,6 @@
         </div>
     </div>
 
-    <!-- PANEL DE TRABAJO -->
     <div id="dashboard" class="dashboard-container">
         <div class="top-nav">
             <h1>Panel de Staff</h1>
@@ -287,22 +264,18 @@
         </div>
 
         <div class="columns">
-            <!-- NUEVA COLUMNA: SOLICITUDES -->
             <div class="column">
                 <h2 style="color: #3b82f6;">Solicitudes Nuevas</h2>
                 <div id="solicitudes-tasks"></div>
             </div>
-            
             <div class="column">
                 <h2>Pendientes</h2>
                 <div id="pending-tasks"></div>
             </div>
-            
             <div class="column">
                 <h2>Aceptados</h2>
                 <div id="accepted-tasks"></div>
             </div>
-            
             <div class="column admin-only" style="display: none;">
                 <h2>Terminados / Logs</h2>
                 <div id="completed-tasks"></div>
@@ -310,12 +283,10 @@
         </div>
     </div>
 
-    <!-- ICONO DEL CHAT (FLOTANTE) -->
     <div id="chat-toggle">
         <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
     </div>
 
-    <!-- VENTANA DEL CHAT -->
     <div id="chat-container">
         <div class="chat-header">
             Chat de Staff
