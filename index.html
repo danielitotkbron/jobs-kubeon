@@ -3,17 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kubeon - Panel de Trabajos</title>
+    <title>Kubeon - Panel de Staff</title>
     
     <link rel="icon" type="image/png" href="logo.png">
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
     <script type="module">
-        // Importamos Firebase desde el CDN oficial
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-        // TUS LLAVES
         const firebaseConfig = {
             apiKey: "AIzaSyB4fJNlncjWova31Ecf2tc6TZABdMGj5hQ",
             authDomain: "kubeon-jobs-4f3ff.firebaseapp.com",
@@ -24,23 +23,22 @@
             measurementId: "G-SYHKLH3TGN"
         };
 
-        // Inicializar
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Variables Globales
         let currentUser = null;
         let isAdmin = false;
+        let currentUserName = "";
 
-        // --- LOGICA DE LOGIN Y REGISTRO INICIAL ---
+        // Elementos del DOM
         const loginForm = document.getElementById('login-form');
-        const registerForm = document.getElementById('register-form');
         const loginScreen = document.getElementById('login-screen');
         const dashboardScreen = document.getElementById('dashboard');
+        const registerForm = document.getElementById('register-form');
         const loginTitle = document.getElementById('login-title');
 
-        // Si no hay usuarios en la BD, mostramos el registro para el Dueño
+        // --- LOGICA DE LOGIN (IGUAL QUE ANTES PERO MEJORADA) ---
         async function checkInitialUser() {
             const usersRef = collection(db, "usuarios");
             const snapshot = await getDocs(usersRef);
@@ -52,59 +50,52 @@
         }
         checkInitialUser();
 
-        // Crear Dueño (Solo funciona la primera vez)
         registerForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('reg-email').value;
             const password = document.getElementById('reg-password').value;
             try {
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                // Lo guardamos en la BD como Admin
-                await addDoc(collection(db, "usuarios"), {
-                    email: email,
-                    rol: "admin"
-                });
+                await addDoc(collection(db, "usuarios"), { email: email, rol: "admin" });
                 alert("¡Cuenta de Dueño creada con éxito!");
-            } catch (error) {
-                alert("Error: " + error.message);
-            }
+            } catch (error) { alert("Error: " + error.message); }
         });
 
-        // Iniciar Sesión
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
             try {
                 await signInWithEmailAndPassword(auth, email, password);
-            } catch (error) {
-                alert("Error al iniciar sesión: " + error.message);
-            }
+            } catch (error) { alert("Credenciales incorrectas."); }
         });
 
-        // Detectar el estado del usuario (Si entró o salió)
+        document.getElementById('logout-btn').addEventListener('click', () => { signOut(auth); });
+
+        // --- DETECTAR SESIÓN ---
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUser = user;
                 loginScreen.style.display = "none";
                 dashboardScreen.style.display = "block";
 
-                // Verificar si es Admin
+                // Obtener nombre y rol
                 const q = query(collection(db, "usuarios"), where("email", "==", user.email));
                 const querySnapshot = await getDocs(q);
                 isAdmin = false;
+                currentUserName = user.email.split('@')[0];
                 
                 querySnapshot.forEach((doc) => {
                     if (doc.data().rol === "admin") isAdmin = true;
+                    if(doc.data().nombre) currentUserName = doc.data().nombre;
                 });
 
-                // Mostrar cosas de admin
                 document.querySelectorAll('.admin-only').forEach(el => {
                     el.style.display = isAdmin ? "block" : "none";
                 });
 
-                // Cargar tareas
                 cargarTareas();
+                iniciarChat();
 
             } else {
                 currentUser = null;
@@ -113,32 +104,20 @@
             }
         });
 
-        // Cerrar Sesión
-        document.getElementById('logout-btn').addEventListener('click', () => {
-            signOut(auth);
-        });
-
-        // --- LOGICA DE LAS TAREAS ---
+        // --- LOGICA DE TAREAS ---
         window.crearTarea = async () => {
-            const titulo = prompt("Nombre de la tarea:");
+            if (!isAdmin) return alert("No tienes permisos.");
+            const titulo = prompt("Título de la tarea:");
             if (!titulo) return;
-            const desc = prompt("Descripción de la tarea:");
+            const desc = prompt("Descripción:");
             if (!desc) return;
-            const asignado = prompt("Email del trabajador asignado:");
+            const asignado = prompt("Email del trabajador:");
             if (!asignado) return;
 
-            try {
-                await addDoc(collection(db, "tareas"), {
-                    titulo: titulo,
-                    descripcion: desc,
-                    asignadoA: asignado,
-                    estado: "pendiente",
-                    fecha: new Date()
-                });
-                cargarTareas();
-            } catch (e) {
-                alert("Error al crear tarea: " + e.message);
-            }
+            await addDoc(collection(db, "tareas"), {
+                titulo: titulo, descripcion: desc, asignadoA: asignado, estado: "pendiente", fecha: new Date()
+            });
+            cargarTareas();
         };
 
         async function cargarTareas() {
@@ -146,9 +125,7 @@
             const contenedorAceptados = document.getElementById('accepted-tasks');
             const contenedorTerminados = document.getElementById('completed-tasks');
             
-            contenedorPendientes.innerHTML = '';
-            contenedorAceptados.innerHTML = '';
-            contenedorTerminados.innerHTML = '';
+            contenedorPendientes.innerHTML = ''; contenedorAceptados.innerHTML = ''; contenedorTerminados.innerHTML = '';
 
             const querySnapshot = await getDocs(collection(db, "tareas"));
             
@@ -156,139 +133,150 @@
                 const tarea = docSnap.data();
                 const id = docSnap.id;
                 
-                // Si no es admin, solo ve sus propias tareas
-                if (!isAdmin && tarea.asignadoA !== currentUser.email) return;
+                // Si es trabajador, solo ve las tareas que le asignaron O las que no tienen asignar (para tomar)
+                if (!isAdmin && tarea.asignadoA !== currentUser.email && tarea.asignadoA !== "Sin asignar") return;
 
-                // Crear el HTML de la tarjeta de tarea
                 const card = document.createElement('div');
                 card.className = 'task-card';
+                
+                // Determinamos las acciones segun el estado y si es staff
+                let actionsHTML = '';
+                if (tarea.estado === 'pendiente') {
+                    if (tarea.asignadoA === "Sin asignar") {
+                        actionsHTML = `<button onclick="tomarTarea('${id}')">Tomar Tarea</button>`;
+                    } else if (tarea.asignadoA === currentUser.email) {
+                        actionsHTML = `<button onclick="cambiarEstado('${id}', 'aceptado')">Aceptar</button>`;
+                    }
+                } else if (tarea.estado === 'aceptado') {
+                    actionsHTML = `<button onclick="cambiarEstado('${id}', 'terminado')">Terminar</button>`;
+                }
+                
+                if (isAdmin) {
+                    actionsHTML += `<button class="btn-danger" onclick="borrarTarea('${id}')">Eliminar</button>`;
+                }
+
+                // Datos extra si vienen de la web de servicios
+                let clienteInfo = tarea.clienteDiscord ? `<span class="badge badge-client">Cliente: ${tarea.clienteDiscord}</span>` : '';
+                let precioInfo = tarea.precio ? `<span class="badge badge-price">${tarea.precio}</span>` : '';
+
                 card.innerHTML = `
-                    <h4>${tarea.titulo}</h4>
-                    <p>${tarea.descripcion}</p>
-                    <small>Asignado a: ${tarea.asignadoA}</small>
-                    <div class="task-actions">
-                        ${tarea.estado === 'pendiente' ? `<button onclick="cambiarEstado('${id}', 'aceptado')">Aceptar</button>` : ''}
-                        ${tarea.estado === 'aceptado' ? `<button onclick="cambiarEstado('${id}', 'terminado')">Terminar</button>` : ''}
-                        ${isAdmin ? `<button class="btn-danger" onclick="borrarTarea('${id}')">Eliminar</button>` : ''}
+                    <div class="task-header">
+                        <h4>${tarea.titulo}</h4>
+                        ${precioInfo}
                     </div>
+                    <p>${tarea.descripcion}</p>
+                    <div class="task-meta">
+                        ${clienteInfo}
+                        <span class="badge badge-assign">Asignado a: ${tarea.asignadoA}</span>
+                    </div>
+                    <div class="task-actions">${actionsHTML}</div>
                 `;
 
-                // Mover a la columna correcta
                 if (tarea.estado === 'pendiente') contenedorPendientes.appendChild(card);
                 if (tarea.estado === 'aceptado') contenedorAceptados.appendChild(card);
                 if (tarea.estado === 'terminado') contenedorTerminados.appendChild(card);
             });
         }
 
-        // Cambiar de estado (Pendiente -> Aceptado -> Terminado)
+        window.tomarTarea = async (id) => {
+            await updateDoc(doc(db, "tareas", id), { asignadoA: currentUser.email });
+            cargarTareas();
+        };
+
         window.cambiarEstado = async (id, nuevoEstado) => {
-            try {
-                const tareaRef = doc(db, "tareas", id);
-                await updateDoc(tareaRef, { estado: nuevoEstado });
+            await updateDoc(doc(db, "tareas", id), { estado: nuevoEstado });
+            cargarTareas();
+        };
+
+        window.borrarTarea = async (id) => {
+            if (!isAdmin) return;
+            if (confirm("¿Eliminar tarea?")) {
+                await deleteDoc(doc(db, "tareas", id));
                 cargarTareas();
-            } catch (e) {
-                alert("Error al actualizar: " + e.message);
             }
         };
 
-        // Borrar tarea (Solo Admin)
-        window.borrarTarea = async (id) => {
-            if (!confirm("¿Seguro que quieres eliminar esta tarea?")) return;
-            try {
-                await deleteDoc(doc(db, "tareas", id));
-                cargarTareas();
-            } catch (e) {
-                alert("Error al borrar: " + e.message);
-            }
+        // --- LOGICA DEL CHAT ---
+        function iniciarChat() {
+            const chatContainer = document.getElementById('chat-messages');
+            const chatForm = document.getElementById('chat-form');
+            
+            // Escuchar mensajes en tiempo real
+            const q = query(collection(db, "chat_staff"), orderBy("fecha", "asc"));
+            onSnapshot(q, (snapshot) => {
+                chatContainer.innerHTML = '';
+                snapshot.forEach((doc) => {
+                    const msg = doc.data();
+                    const div = document.createElement('div');
+                    div.className = msg.autor === currentUserName ? 'msg msg-own' : 'msg';
+                    div.innerHTML = `<strong>${msg.autor}:</strong> <br> ${msg.texto}`;
+                    chatContainer.appendChild(div);
+                });
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            });
+
+            // Enviar mensaje
+            chatForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const input = document.getElementById('chat-input');
+                if (!input.value.trim()) return;
+                
+                await addDoc(collection(db, "chat_staff"), {
+                    autor: currentUserName,
+                    texto: input.value,
+                    fecha: new Date()
+                });
+                input.value = '';
+            });
+        }
+
+        // Abrir/Cerrar ventana de chat
+        window.toggleChat = () => {
+            const chatWindow = document.getElementById('chat-window');
+            chatWindow.style.display = chatWindow.style.display === 'flex' ? 'none' : 'flex';
         };
+
     </script>
     <style>
-        /* ESTILOS DE KUBEON */
+        /* ESTILOS PRO */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Montserrat', sans-serif; }
         body { background: #090b11; color: white; min-height: 100vh; }
         
-        /* PANTALLA DE LOGIN */
+        /* LOGIN */
         .login-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: radial-gradient(circle at top left, rgba(126,34,206,0.15), transparent 50%); }
         .login-box { background: rgba(18, 18, 25, .92); border: 1px solid rgba(168, 85, 247, .3); border-radius: 20px; padding: 40px; width: 100%; max-width: 400px; text-align: center; backdrop-filter: blur(10px); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
         .login-box h1 { margin-bottom: 20px; font-weight: 900; }
         .login-box form { display: flex; flex-direction: column; gap: 15px; }
-        input { padding: 15px; border-radius: 10px; border: 1px solid rgba(168, 85, 247, 0.3); background: rgba(0,0,0,0.5); color: white; font-size: 16px; outline: none; transition: 0.3s; }
+        input { padding: 15px; border-radius: 10px; border: 1px solid rgba(168, 85, 247, 0.3); background: rgba(0,0,0,0.5); color: white; font-size: 16px; outline: none; }
         input:focus { border-color: #a855f7; }
         button { padding: 15px; border-radius: 10px; border: none; background: #7e22ce; color: white; font-weight: 700; font-size: 16px; cursor: pointer; transition: 0.3s; }
-        button:hover { background: #9333ea; transform: scale(1.02); }
-        .btn-danger { background: #dc2626; padding: 8px 15px; font-size: 12px; }
-        .btn-danger:hover { background: #ef4444; }
-
-        /* PANEL DASHBOARD */
-        .dashboard-container { padding: 40px; max-width: 1400px; margin: 0 auto; display: none; }
-        .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; border-bottom: 1px solid rgba(168, 85, 247, 0.2); padding-bottom: 20px; }
+        button:hover { background: #9333ea; }
+        
+        /* DASHBOARD */
+        .dashboard-container { padding: 30px; max-width: 1400px; margin: 0 auto; display: none; }
+        .top-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; background: rgba(18, 18, 25, .8); padding: 15px 25px; border-radius: 16px; border: 1px solid rgba(168, 85, 247, 0.2); }
+        .top-nav h1 { font-size: 24px; font-weight: 800; }
+        .user-info { display: flex; align-items: center; gap: 15px; color: #9ca3af; font-size: 14px; }
         
         .columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-        .column { background: rgba(18, 18, 25, .6); border: 1px solid rgba(168, 85, 247, 0.15); border-radius: 16px; padding: 20px; min-height: 400px; }
-        .column h2 { font-size: 20px; margin-bottom: 20px; border-bottom: 1px solid rgba(168, 85, 247, 0.2); padding-bottom: 10px; }
+        .column { background: rgba(18, 18, 25, .4); border: 1px solid rgba(168, 85, 247, 0.1); border-radius: 16px; padding: 20px; min-height: 500px; }
+        .column h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 1px; color: #9ca3af; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+        .column h2::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #a855f7; }
+        .column:nth-child(2) h2::before { background: #eab308; }
+        .column:nth-child(3) h2::before { background: #22c55e; }
         
-        .task-card { background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 12px; padding: 15px; margin-bottom: 15px; }
-        .task-card h4 { font-size: 16px; margin-bottom: 5px; }
-        .task-card p { font-size: 14px; color: #9ca3af; margin-bottom: 10px; }
-        .task-card small { display: block; font-size: 12px; color: #a855f7; margin-bottom: 10px; }
-        .task-actions { display: flex; gap: 10px; }
-        .task-actions button { padding: 8px 15px; font-size: 12px; flex: 1; }
-
-        .admin-controls { margin-top: 30px; text-align: center; }
-        .admin-controls button { padding: 15px 30px; font-size: 18px; }
-    </style>
-</head>
-<body>
-
-    <!-- PANTALLA DE LOGIN -->
-    <div id="login-screen" class="login-container">
-        <div class="login-box">
-            <h1 id="login-title">Kubeon Jobs</h1>
-            
-            <!-- Formulario de Login -->
-            <form id="login-form">
-                <input type="email" id="email" placeholder="Correo electrónico" required>
-                <input type="password" id="password" placeholder="Contraseña" required>
-                <button type="submit">Iniciar Sesión</button>
-            </form>
-
-            <!-- Formulario de Registro (Solo aparece la primera vez) -->
-            <form id="register-form" style="display: none;">
-                <p style="color: #9ca3af; font-size: 14px; margin-bottom: 10px;">Bienvenido. Como no hay usuarios, crea la cuenta del Dueño.</p>
-                <input type="email" id="reg-email" placeholder="Tu Correo" required>
-                <input type="password" id="reg-password" placeholder="Contraseña" required>
-                <button type="submit" style="background: #16a34a;">Crear Cuenta de Dueño</button>
-            </form>
-        </div>
-    </div>
-
-    <!-- PANEL DE TRABAJO -->
-    <div id="dashboard" class="dashboard-container">
-        <div class="top-nav">
-            <h1>Panel de Trabajos</h1>
-            <button id="logout-btn" style="background: #4b5563; padding: 10px 20px; font-size: 14px;">Cerrar Sesión</button>
-        </div>
-
-        <div class="columns">
-            <div class="column">
-                <h2>Pendientes</h2>
-                <div id="pending-tasks"></div>
-            </div>
-            <div class="column">
-                <h2>Aceptados</h2>
-                <div id="accepted-tasks"></div>
-            </div>
-            <div class="column admin-only" style="display: none;">
-                <h2>Terminados / Logs</h2>
-                <div id="completed-tasks"></div>
-            </div>
-        </div>
+        /* TARJETAS TAREAS */
+        .task-card { background: #151122; border: 1px solid rgba(168, 85, 247, 0.2); border-radius: 12px; padding: 20px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        .task-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+        .task-header h4 { font-size: 16px; font-weight: 700; color: #f3f4f6; }
+        .task-card p { font-size: 14px; color: #9ca3af; margin-bottom: 15px; line-height: 1.5; }
         
-        <!-- Botón para que el Admin cree tareas -->
-        <div class="admin-controls admin-only" style="display: none;">
-            <button onclick="crearTarea()">+ Crear Nueva Tarea</button>
-        </div>
-    </div>
-
-</body>
-</html>
+        .badge { font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: 700; display: inline-block; margin-right: 5px; margin-bottom: 10px; }
+        .badge-client { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .badge-price { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .badge-assign { background: rgba(168, 85, 247, 0.1); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.2); }
+        
+        .task-actions { display: flex; gap: 10px; margin-top: 15px; }
+        .task-actions button { padding: 8px 12px; font-size: 12px; flex: 1; background: #2e1065; color: #d8b4fe; border: 1px solid #7e22ce; }
+        .task-actions button:hover { background: #4c1d95; }
+        .btn-danger { background: rgba(220, 38, 38, 0.1) !important; color: #f87171 !important; border-color: rgba(220, 38, 38, 
